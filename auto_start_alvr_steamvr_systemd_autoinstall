@@ -1,0 +1,179 @@
+#!/bin/bash
+
+set -e
+
+echo "📦 Setting up ALVR Dashboard autostart only..."
+
+# === Variables ===
+USERNAME=$(whoami)
+ALVR_VERSION="v20.13.0"
+INSTALL_BASE="/home/$USERNAME/.local/share/ALVR-Launcher/installations"
+INSTALL_DIR="$INSTALL_BASE/$ALVR_VERSION"
+DOWNLOAD_URL="https://github.com/alvr-org/ALVR/releases/download/v20.13.0/alvr_streamer_linux.tar.gz"
+TMP_ARCHIVE="/tmp/alvr_streamer_${ALVR_VERSION}.tar.gz"
+
+ALVR_DASHBOARD="$INSTALL_DIR/alvr_streamer_linux/bin/alvr_dashboard"
+VR_SCRIPT_PATH="$HOME/.local/bin/start-alvr.sh"
+SYSTEMD_UNIT_PATH="$HOME/.config/systemd/user/start-alvr.service"
+LOGFILE="$HOME/alvr-autostart.log"
+
+STEAMCMD_DIR="$HOME/steamcmd"
+STEAMVR_APPID=250820
+STEAMVR_DIR="$HOME/.local/share/Steam/steamapps/common/SteamVR"
+STEAMVR_VRMONITOR="$STEAMVR_DIR/bin/vrmonitor.sh"
+
+# === Download and install ALVR if needed ===
+if [[ ! -x "$ALVR_DASHBOARD" ]]; then
+    echo "⬇️ ALVR Dashboard not found, downloading and installing..."
+
+    if curl -L -o "$TMP_ARCHIVE" "$DOWNLOAD_URL"; then
+        echo "✅ Download succeeded."
+    else
+        echo "⚠️ Download failed! Continuing with existing files if any."
+    fi
+
+    mkdir -p "$INSTALL_DIR"
+
+    if tar -xzf "$TMP_ARCHIVE" -C "$INSTALL_DIR"; then
+        echo "✅ Extraction succeeded."
+    else
+        echo "⚠️ Extraction failed! Continuing with existing files if any."
+    fi
+
+    rm -f "$TMP_ARCHIVE"
+else
+    echo "✅ ALVR Dashboard already installed."
+fi
+
+# === Check ALVR executable exists ===
+if [[ ! -x "$ALVR_DASHBOARD" ]]; then
+    echo "❌ ERROR: ALVR Dashboard executable not found at: $ALVR_DASHBOARD"
+    echo "Please check installation."
+fi
+
+# === Disable GNOME's onscreen keyboard ===
+if command -v gsettings &> /dev/null; then
+    echo "🧹 Disabling GNOME accessibility keyboard..."
+    gsettings set org.gnome.desktop.a11y.applications screen-keyboard-enabled false || true
+fi
+
+# === Create ALVR startup script ===
+echo "🛠️  Creating ALVR startup script..."
+mkdir -p "$(dirname "$VR_SCRIPT_PATH")"
+
+cat > "$VR_SCRIPT_PATH" <<EOF
+#!/bin/bash
+
+LOGFILE="\$HOME/alvr-autostart.log"
+
+{
+    echo "==== \$(date): Starting ALVR Dashboard ===="
+
+    export DISPLAY=:0
+    export XDG_RUNTIME_DIR="/run/user/\$(id -u)"
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=\$XDG_RUNTIME_DIR/bus"
+
+    echo "Killing on-screen keyboard if running..."
+    pkill -f caribou || true
+    pkill -f onboard || true
+    pkill -f maliit-keyboard || true
+
+    echo "Launching ALVR Dashboard..."
+    "$ALVR_DASHBOARD" &
+    echo "✅ ALVR Dashboard launched."
+
+    wait \$!
+
+    echo "==== \$(date): ALVR closed, exiting ===="
+} >> "\$LOGFILE" 2>&1
+EOF
+
+chmod +x "$VR_SCRIPT_PATH"
+
+# === Create systemd service ===
+echo "🛠️  Creating systemd user service..."
+mkdir -p "$(dirname "$SYSTEMD_UNIT_PATH")"
+
+cat > "$SYSTEMD_UNIT_PATH" <<EOF
+[Unit]
+Description=Start ALVR Dashboard on login
+After=graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=$VR_SCRIPT_PATH
+Restart=on-failure
+Environment=DISPLAY=:0
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+
+[Install]
+WantedBy=default.target
+EOF
+
+# === Enable systemd service ===
+echo "🔁 Enabling systemd user service..."
+systemctl --user daemon-reexec
+systemctl --user daemon-reload
+systemctl --user enable start-alvr.service
+
+echo "✅ ALVR Dashboard autostart is fully set up!"
+echo "📂 Service: $SYSTEMD_UNIT_PATH"
+echo "📝 Log file: $LOGFILE"
+echo "🔁 Will run automatically after login."
+
+# === Modify ALVR config to auto-launch SteamVR ===
+FILE="$HOME/.config/alvr/session.json"
+
+if [[ -f "$FILE" ]]; then
+    sed -i.bak 's/"open_close_steamvr_with_dashboard": false/"open_close_steamvr_with_dashboard": true/' "$FILE"
+    echo "✅ Changed open_close_steamvr_with_dashboard to true in $FILE"
+    echo "Backup saved as $FILE.bak"
+else
+    echo "⚠️ ALVR session.json config file not found at $FILE"
+fi
+
+# === STEAMVR INSTALLATION & LAUNCH OPTIONS SETUP ===
+echo "📦 Setting up SteamVR via SteamCMD..."
+
+# Check steamcmd installation
+if [[ ! -x "$STEAMCMD_DIR/steamcmd.sh" ]]; then
+    echo "⬇️ steamcmd not found, downloading..."
+    mkdir -p "$STEAMCMD_DIR"
+    if curl -L -o /tmp/steamcmd_linux.tar.gz https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz; then
+        tar -xzf /tmp/steamcmd_linux.tar.gz -C "$STEAMCMD_DIR"
+        rm -f /tmp/steamcmd_linux.tar.gz
+        echo "✅ steamcmd installed."
+    else
+        echo "⚠️ steamcmd download failed! Skipping SteamVR installation."
+        exit 0
+    fi
+else
+    echo "✅ steamcmd already installed."
+fi
+
+# Install SteamVR
+echo "⬇️ Installing/updating SteamVR (appID: $STEAMVR_APPID)..."
+"$STEAMCMD_DIR/steamcmd.sh" +login anonymous +force_install_dir "$HOME/.local/share/Steam/steamapps/common/SteamVR" +app_update $STEAMVR_APPID validate +quit
+
+# Wait a second for files to settle
+sleep 2
+
+# Check SteamVR directory & vrmonitor.sh existence
+if [[ -f "$STEAMVR_VRMONITOR" ]]; then
+    echo "✅ SteamVR installed at $STEAMVR_DIR"
+else
+    echo "⚠️ SteamVR vrmonitor.sh not found at $STEAMVR_VRMONITOR"
+fi
+
+# Set SteamVR launch options via Steam config (assuming Steam installed and user config is accessible)
+# WARNING: Steam launch options are stored in Steam userdata config files (hard to script reliably)
+# So here, we create a helper to set launch options via Steam Web API or CLI (not trivial)
+# Instead, we can create a steam shortcut config for SteamVR with the launch option if needed.
+# For now, print instructions:
+
+echo "ℹ️ To set SteamVR launch options to:"
+echo "   $STEAMVR_VRMONITOR %command%"
+echo "please set it manually in Steam Library -> SteamVR -> Properties -> Set Launch Options."
+
+echo "✅ Setup complete!"
