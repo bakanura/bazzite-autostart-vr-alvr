@@ -1,0 +1,30 @@
+#!/bin/bash
+
+USERNAME=$(whoami)
+STEAMVR_DIR="$HOME/.local/share/Steam/steamapps/common/SteamVR"
+STEAMVR_VRMONITOR="$STEAMVR_DIR/bin/vrmonitor.sh"
+ALVR_SESSION_JSON="$HOME/.config/alvr/session.json"
+
+echo "🔧 Configuring ALVR and SteamVR launch options..."
+
+# 1) Set ALVR to auto-start SteamVR on dashboard launch
+if [[ -f "$ALVR_SESSION_JSON" ]]; then
+    sed -i.bak 's/"open_close_steamvr_with_dashboard": false/"open_close_steamvr_with_dashboard": true/' "$ALVR_SESSION_JSON"
+    echo "✅ Updated ALVR session.json: open_close_steamvr_with_dashboard=true"
+    echo "Backup saved as $ALVR_SESSION_JSON.bak"
+else
+    echo "⚠️ ALVR session.json not found at $ALVR_SESSION_JSON"
+fi
+
+# 2) Check SteamVR vrmonitor.sh path and print instructions
+if [[ -f "$STEAMVR_VRMONITOR" ]]; then
+    echo "✅ SteamVR detected at $STEAMVR_DIR"
+    echo "⚠️ Please set SteamVR launch options in Steam to:"
+    echo "   $STEAMVR_VRMONITOR %command%"
+    echo "(Go to Steam Library → SteamVR → Properties → Set Launch Options)"
+else
+    echo "⚠️ SteamVR not found at $STEAMVR_VRMONITOR"
+    echo "Make sure SteamVR is installed before setting launch options."
+fi
+
+echo "Done."
