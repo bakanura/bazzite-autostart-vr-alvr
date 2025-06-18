@@ -2,7 +2,7 @@
 
 set -e
 
-echo "📦 Setting up ALVR Dashboard autostart only..."
+echo "📦 Setting up ALVR Dashboard autostart with SteamVR restart permissions..."
 
 # === Variables ===
 USERNAME=$(whoami)
@@ -22,8 +22,10 @@ STEAMVR_APPID=250820
 STEAMVR_DIR="$HOME/.local/share/Steam/steamapps/common/SteamVR"
 STEAMVR_VRMONITOR="$STEAMVR_DIR/bin/vrmonitor.sh"
 
-# === Download and install ALVR if needed ===
-if [[ ! -x "$ALVR_DASHBOARD" ]]; then
+# === Check if ALVR Dashboard is already installed ===
+if [[ -x "$ALVR_DASHBOARD" ]]; then
+    echo "✅ ALVR Dashboard is already installed."
+else
     echo "⬇️ ALVR Dashboard not found, downloading and installing..."
 
     if curl -L -o "$TMP_ARCHIVE" "$DOWNLOAD_URL"; then
@@ -41,14 +43,45 @@ if [[ ! -x "$ALVR_DASHBOARD" ]]; then
     fi
 
     rm -f "$TMP_ARCHIVE"
-else
-    echo "✅ ALVR Dashboard already installed."
 fi
 
-# === Check ALVR executable exists ===
+# === Check if SteamVR is installed ===
+if [[ -d "$STEAMVR_DIR" && -x "$STEAMVR_VRMONITOR" ]]; then
+    echo "✅ SteamVR is already installed."
+else
+    echo "⬇️ Installing/updating SteamVR (appID: $STEAMVR_APPID)..."
+
+    if [[ ! -x "$STEAMCMD_DIR/steamcmd.sh" ]]; then
+        echo "⬇️ steamcmd not found, downloading..."
+        mkdir -p "$STEAMCMD_DIR"
+        if curl -L -o /tmp/steamcmd_linux.tar.gz https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz; then
+            tar -xzf /tmp/steamcmd_linux.tar.gz -C "$STEAMCMD_DIR"
+            rm -f /tmp/steamcmd_linux.tar.gz
+            echo "✅ steamcmd installed."
+        else
+            echo "⚠️ steamcmd download failed! Skipping SteamVR installation."
+            exit 0
+        fi
+    else
+        echo "✅ steamcmd already installed."
+    fi
+
+    "$STEAMCMD_DIR/steamcmd.sh" +login anonymous +force_install_dir "$STEAMVR_DIR" +app_update $STEAMVR_APPID validate +quit
+
+    sleep 2
+
+    if [[ -f "$STEAMVR_VRMONITOR" ]]; then
+        echo "✅ SteamVR installed at $STEAMVR_DIR"
+    else
+        echo "⚠️ SteamVR vrmonitor.sh not found at $STEAMVR_VRMONITOR"
+    fi
+fi
+
+# === Check if ALVR Dashboard executable exists ===
 if [[ ! -x "$ALVR_DASHBOARD" ]]; then
     echo "❌ ERROR: ALVR Dashboard executable not found at: $ALVR_DASHBOARD"
     echo "Please check installation."
+    exit 1
 fi
 
 # === Disable GNOME's onscreen keyboard ===
@@ -106,6 +139,7 @@ ExecStart=$VR_SCRIPT_PATH
 Restart=on-failure
 Environment=DISPLAY=:0
 Environment=XDG_RUNTIME_DIR=/run/user/%U
+AmbientCapabilities=CAP_KILL
 
 [Install]
 WantedBy=default.target
@@ -132,48 +166,5 @@ if [[ -f "$FILE" ]]; then
 else
     echo "⚠️ ALVR session.json config file not found at $FILE"
 fi
-
-# === STEAMVR INSTALLATION & LAUNCH OPTIONS SETUP ===
-echo "📦 Setting up SteamVR via SteamCMD..."
-
-# Check steamcmd installation
-if [[ ! -x "$STEAMCMD_DIR/steamcmd.sh" ]]; then
-    echo "⬇️ steamcmd not found, downloading..."
-    mkdir -p "$STEAMCMD_DIR"
-    if curl -L -o /tmp/steamcmd_linux.tar.gz https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz; then
-        tar -xzf /tmp/steamcmd_linux.tar.gz -C "$STEAMCMD_DIR"
-        rm -f /tmp/steamcmd_linux.tar.gz
-        echo "✅ steamcmd installed."
-    else
-        echo "⚠️ steamcmd download failed! Skipping SteamVR installation."
-        exit 0
-    fi
-else
-    echo "✅ steamcmd already installed."
-fi
-
-# Install SteamVR
-echo "⬇️ Installing/updating SteamVR (appID: $STEAMVR_APPID)..."
-"$STEAMCMD_DIR/steamcmd.sh" +login anonymous +force_install_dir "$HOME/.local/share/Steam/steamapps/common/SteamVR" +app_update $STEAMVR_APPID validate +quit
-
-# Wait a second for files to settle
-sleep 2
-
-# Check SteamVR directory & vrmonitor.sh existence
-if [[ -f "$STEAMVR_VRMONITOR" ]]; then
-    echo "✅ SteamVR installed at $STEAMVR_DIR"
-else
-    echo "⚠️ SteamVR vrmonitor.sh not found at $STEAMVR_VRMONITOR"
-fi
-
-# Set SteamVR launch options via Steam config (assuming Steam installed and user config is accessible)
-# WARNING: Steam launch options are stored in Steam userdata config files (hard to script reliably)
-# So here, we create a helper to set launch options via Steam Web API or CLI (not trivial)
-# Instead, we can create a steam shortcut config for SteamVR with the launch option if needed.
-# For now, print instructions:
-
-echo "ℹ️ To set SteamVR launch options to:"
-echo "   $STEAMVR_VRMONITOR %command%"
-echo "please set it manually in Steam Library -> SteamVR -> Properties -> Set Launch Options."
 
 echo "✅ Setup complete!"
