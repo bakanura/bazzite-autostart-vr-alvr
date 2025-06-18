@@ -85,3 +85,11 @@ echo "✅ ALVR Dashboard autostart is fully set up!"
 echo "📂 Service: $SYSTEMD_UNIT_PATH"
 echo "📝 Log file: $LOGFILE"
 echo "🔁 Will run automatically after login."
+
+FILE="/home/bakadesk/.config/alvr/session.json"
+
+sed -i.bak 's/"open_close_steamvr_with_dashboard": false/"open_close_steamvr_with_dashboard": true/' "$FILE"
+
+echo "✅ Changed open_close_steamvr_with_dashboard to true in $FILE"
+echo "Backup saved as $FILE.bak"
+
