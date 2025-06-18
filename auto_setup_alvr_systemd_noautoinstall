@@ -1,0 +1,97 @@
+#!/bin/bash
+
+set -e
+
+echo "📦 Setting up VR autostart environment with SteamVR first..."
+
+# === Fixed Config ===
+ALVR_DASHBOARD="/var/home/bakadesk/.local/share/ALVR-Launcher/installations/v20.13.0/alvr_streamer_linux/bin/alvr_dashboard"
+VR_SCRIPT_PATH="$HOME/.local/bin/start-vr.sh"
+SYSTEMD_UNIT_PATH="$HOME/.config/systemd/user/start-vr.service"
+LOGFILE="$HOME/vr-autostart.log"
+
+# === Check ALVR exists ===
+if [[ ! -x "$ALVR_DASHBOARD" ]]; then
+    echo "❌ ERROR: ALVR Dashboard not found at: $ALVR_DASHBOARD"
+    exit 1
+fi
+
+# === Disable GNOME's onscreen keyboard (if GNOME is used) ===
+if command -v gsettings &> /dev/null; then
+    echo "🧹 Disabling GNOME accessibility keyboard..."
+    gsettings set org.gnome.desktop.a11y.applications screen-keyboard-enabled false || true
+fi
+
+# === Create startup script ===
+echo "🛠️  Creating VR startup script..."
+mkdir -p "$(dirname "$VR_SCRIPT_PATH")"
+
+cat > "$VR_SCRIPT_PATH" <<EOF
+#!/bin/bash
+
+LOGFILE="\$HOME/vr-autostart.log"
+
+{
+    echo "==== \$(date): Starting VR autostart ===="
+
+    export DISPLAY=:0
+    export XDG_RUNTIME_DIR="/run/user/\$(id -u)"
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=\$XDG_RUNTIME_DIR/bus"
+
+    echo "Killing on-screen keyboard if running..."
+    pkill -f caribou
+    pkill -f onboard
+    pkill -f maliit-keyboard
+
+    echo "Launching SteamVR first..."
+    steam -applaunch 250820 &
+    STEAMVR_PID=\$!
+
+    echo "Waiting 15 seconds for SteamVR to initialize..."
+    sleep 15
+
+    echo "Launching ALVR Dashboard..."
+    "$ALVR_DASHBOARD" &
+    ALVR_PID=\$!
+    echo "ALVR PID: \$ALVR_PID"
+
+    wait \$ALVR_PID
+
+    echo "==== \$(date): ALVR closed, exiting ===="
+
+} >> "\$LOGFILE" 2>&1
+EOF
+
+chmod +x "$VR_SCRIPT_PATH"
+
+# === Create systemd service ===
+echo "🛠️  Creating systemd user service..."
+mkdir -p "$(dirname "$SYSTEMD_UNIT_PATH")"
+
+cat > "$SYSTEMD_UNIT_PATH" <<EOF
+[Unit]
+Description=Start ALVR Dashboard and SteamVR on login
+After=graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=$VR_SCRIPT_PATH
+Restart=on-failure
+Environment=DISPLAY=:0
+Environment=XDG_RUNTIME_DIR=/run/user/%U
+
+[Install]
+WantedBy=default.target
+EOF
+
+# === Enable systemd service ===
+echo "🔁 Enabling systemd user service..."
+systemctl --user daemon-reexec
+systemctl --user daemon-reload
+systemctl --user enable start-vr.service
+
+echo "✅ VR autostart is fully set up!"
+echo "📂 Service: $SYSTEMD_UNIT_PATH"
+echo "📝 Log file: $LOGFILE"
+echo "🔁 Will run automatically after login."
